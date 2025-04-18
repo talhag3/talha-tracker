@@ -15,17 +15,35 @@ $currentPage = basename($_SERVER['PHP_SELF']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Talha Tracker - <?php echo ucfirst(str_replace(['_', '.php'], [' ', ''], $currentPage)); ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <?php if (in_array($currentPage, ['index.php', 'reports.php'])): ?>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <?php endif; ?>
-    <link rel="manifest" href="manifest.json">
-    <link rel="manifest" href="/site.webmanifest">
+    <!-- Web App Manifest -->
+    <link rel="manifest" href="/manifest.json">
+
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#000000" />
+
+    <!-- Mobile Viewport -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- iOS specific tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Your App">
+    <link rel="apple-touch-icon" href="/progress.png">
+
+    <!-- Windows specific tags -->
+    <meta name="msapplication-TileColor" content="#000000">
+    <meta name="msapplication-TileImage" content="/progress.png">
 </head>
+
 <body class="bg-gray-100 min-h-screen pb-16">
     <div class="container mx-auto px-4 py-6">
         <!-- Header -->
@@ -75,5 +93,5 @@ $currentPage = basename($_SERVER['PHP_SELF']);
                 ?>
             </h1>
         </header>
-        
+
         <?php displayFlashMessage(); ?>
