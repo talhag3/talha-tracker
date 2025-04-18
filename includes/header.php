@@ -24,6 +24,7 @@ $currentPage = basename($_SERVER['PHP_SELF']);
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <?php endif; ?>
     <link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="/site.webmanifest">
 </head>
 <body class="bg-gray-100 min-h-screen pb-16">
     <div class="container mx-auto px-4 py-6">

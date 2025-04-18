@@ -1,0 +1,15 @@
+{
+    "name": "Progress Tracker",
+    "short_name": "Progress",
+    "start_url": "/",
+    "display": "standalone",
+    "icons": [
+      {
+        "src": "progress.png",
+        "sizes": "72x72",
+        "type": "image/png"
+      }
+    ],
+    "background_color": "#fff",
+    "theme_color": "#0078d4"
+  }
