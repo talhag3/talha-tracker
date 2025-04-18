@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Talha Tracker - Reports</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen pb-16">
+    <div class="container mx-auto px-4 py-6">
+        <!-- Header -->
+        <header class="mb-6">
+            <h1 class="text-2xl font-bold text-center">📊 Reports</h1>
+        </header>
+
+        <!-- Time Summary -->
+        <div class="bg-white rounded-xl shadow p-4 mb-4">
+            <h2 class="text-lg font-semibold mb-3">Time Summary</h2>
+            
+            <div class="grid grid-cols-3 gap-3 mb-4">
+                <div class="bg-blue-50 p-3 rounded-lg">
+                    <h3 class="text-sm font-medium text-gray-700">Today</h3>
+                    <p class="text-xl font-bold text-blue-600">2h 30m</p>
+                </div>
+                <div class="bg-green-50 p-3 rounded-lg">
+                    <h3 class="text-sm font-medium text-gray-700">This Week</h3>
+                    <p class="text-xl font-bold text-green-600">12h 45m</p>
+                </div>
+                <div class="bg-purple-50 p-3 rounded-lg">
+                    <h3 class="text-sm font-medium text-gray-700">This Month</h3>
+                    <p class="text-xl font-bold text-purple-600">48h 30m</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Project Distribution Chart -->
+        <div class="bg-white rounded-xl shadow p-4 mb-4">
+            <h2 class="text-lg font-semibold mb-3">Project Distribution</h2>
+            <div class="mb-3">
+                <canvas id="projectChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Client Distribution Chart -->
+        <div class="bg-white rounded-xl shadow p-4 mb-4">
+            <h2 class="text-lg font-semibold mb-3">Client Distribution</h2>
+            <div class="mb-3">
+                <canvas id="clientChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Navigation -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white shadow-lg p-2">
+        <div class="flex justify-around">
+            <a href="index.html" class="text-gray-600 flex flex-col items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                <span class="text-xs">Home</span>
+            </a>
+            <a href="work_logs.html" class="text-gray-600 flex flex-col items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                <span class="text-xs">Logs</span>
+            </a>
+            <a href="start_work.html" class="text-gray-600 flex flex-col items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span class="text-xs">Start</span>
+            </a>
+            <a href="reports.html" class="text-blue-600 flex flex-col items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                <span class="text-xs">Reports</span>
+            </a>
+        </div>
+    </nav>
+
+    <script>
+        // Project Distribution Chart
+        const projectCtx = document.getElementById('projectChart').getContext('2d');
+        const projectChart = new Chart(projectCtx, {
+            type: 'bar',
+            data: {
+                labels: ['Website Redesign', 'Mobile App', 'Logo Design', 'SEO Work'],
+                datasets: [{
+                    label: 'Hours Worked',
+                    data: [25, 15, 5, 3.5],
+                    backgroundColor: [
+                        'rgba(54, 162, 235, 0.6)',
+                        'rgba(255, 99, 132, 0.6)',
+                        'rgba(255, 206, 86, 0.6)',
+                        'rgba(75, 192, 192, 0.6)'
+                    ],
+                    borderColor: [
+                        'rgba(54, 162, 235, 1)',
+                        'rgba(255, 99, 132, 1)',
+                        'rgba(255, 206, 86, 1)',
+                        'rgba(75, 192, 192, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Hours'
+                        }
+                    }
+                }
+            }
+        });
+
+        // Client Distribution Chart
+        const clientCtx = document.getElementById('clientChart').getContext('2d');
+        const clientChart = new Chart(clientCtx, {
+            type: 'pie',
+            data: {
+                labels: ['Acme Inc.', 'XYZ Corporation', 'Tech Solutions', 'Design Studio'],
+                datasets: [{
+                    label: 'Hours Worked',
+                    data: [25, 15, 5, 3.5],
+                    backgroundColor: [
+                        'rgba(54, 162, 235, 0.6)',
+                        'rgba(255, 99, 132, 0.6)',
+                        'rgba(255, 206, 86, 0.6)',
+                        'rgba(75, 192, 192, 0.6)'
+                    ],
+                    borderColor: [
+                        'rgba(54, 162, 235, 1)',
+                        'rgba(255, 99, 132, 1)',
+                        'rgba(255, 206, 86, 1)',
+                        'rgba(75, 192, 192, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
