@@ -2,6 +2,9 @@
 // Include header
 require_once 'includes/header.php';
 
+// Get client_id from URL if provided
+$preselectedClientId = filter_var($_GET['client_id'] ?? 0, FILTER_VALIDATE_INT);
+
 // Get all clients for dropdown
 $pdo = getDbConnection();
 $stmt = $pdo->query("SELECT client_id, name FROM clients ORDER BY name");
@@ -39,7 +42,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             
             setFlashMessage('success', "Project '{$name}' added successfully!");
-            header('Location: index.php');
+            
+            // Redirect back to clients page if we came from there
+            if ($preselectedClientId) {
+                header('Location: clients.php');
+            } else {
+                header('Location: index.php');
+            }
             exit;
             
         } catch (PDOException $e) {
@@ -67,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <a href="add_client.php" class="text-blue-600 underline">Add a client now</a>
     </div>
     <?php else: ?>
-    <form method="POST" action="add_project.php">
+    <form method="POST" action="add_project.php<?php echo $preselectedClientId ? "?client_id={$preselectedClientId}" : ''; ?>">
         <div class="mb-4">
             <label for="projectName" class="block text-gray-700 font-medium mb-2">Project Name</label>
             <input type="text" id="projectName" name="projectName" value="<?php echo htmlspecialchars($name ?? ''); ?>" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required>
@@ -78,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <select id="clientSelect" name="clientSelect" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required>
                 <option value="">Select a client</option>
                 <?php foreach ($clients as $client): ?>
-                <option value="<?php echo $client['client_id']; ?>" <?php echo ($clientId ?? 0) == $client['client_id'] ? 'selected' : ''; ?>>
+                <option value="<?php echo $client['client_id']; ?>" <?php echo ($preselectedClientId ?: ($clientId ?? 0)) == $client['client_id'] ? 'selected' : ''; ?>>
                     <?php echo htmlspecialchars($client['name']); ?>
                 </option>
                 <?php endforeach; ?>
@@ -91,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         
         <div class="flex justify-between">
-            <a href="index.php" class="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded">
+            <a href="<?php echo $preselectedClientId ? 'clients.php' : 'index.php'; ?>" class="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded">
                 Cancel
             </a>
             <button type="submit" class="bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded">

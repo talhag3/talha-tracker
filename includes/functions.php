@@ -1,55 +1,28 @@
 <?php
-// Start session if not already started
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// Include database connection
+// Include database configuration
 require_once __DIR__ . '/../config/database.php';
 
-// Format duration in minutes to hours and minutes
-function formatDuration($minutes) {
-    if ($minutes === null) return "0h 0m";
-    
-    $hours = floor($minutes / 60);
-    $mins = $minutes % 60;
-    
-    return "{$hours}h {$mins}m";
-}
+/* // Database connection
+function getDbConnection() {
+    try {
+        $pdo = new PDO("sqlite:" . DB_PATH);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+        return $pdo;
+    } catch (PDOException $e) {
+        die("Database connection failed: " . $e->getMessage());
+    }
+} */
 
-// Format datetime for display
-function formatDateTime($datetime) {
-    if (!$datetime) return "";
-    
-    $date = new DateTime($datetime);
-    return $date->format('M j, Y g:i A'); // Apr 18, 2023 10:30 AM
-}
-
-// Format date only
-function formatDate($datetime) {
-    if (!$datetime) return "";
-    
-    $date = new DateTime($datetime);
-    return $date->format('M j, Y'); // Apr 18, 2023
-}
-
-// Format time only
-function formatTime($datetime) {
-    if (!$datetime) return "";
-    
-    $date = new DateTime($datetime);
-    return $date->format('g:i A'); // 10:30 AM
-}
-
-// Get active work session if any
+// Get active work session
 function getActiveSession() {
     $pdo = getDbConnection();
     
     $stmt = $pdo->query("
         SELECT 
             ws.session_id,
-            ws.start_time,
             ws.project_id,
+            ws.start_time,
             p.name as project_name,
             c.name as client_name
         FROM work_sessions ws
@@ -60,25 +33,65 @@ function getActiveSession() {
         LIMIT 1
     ");
     
-    return $stmt->fetch(PDO::FETCH_ASSOC);
+    return $stmt->fetch();
 }
 
-// Get today's total work time in minutes
+// Format date
+function formatDate($dateString) {
+    $date = new DateTime($dateString);
+    return $date->format('M j, Y');
+}
+
+// Format time
+function formatTime($timeString) {
+    $time = new DateTime($timeString);
+    return $time->format('g:i A');
+}
+
+// Format duration
+function formatDuration($minutes) {
+    if ($minutes < 60) {
+        return $minutes . "m";
+    }
+    
+    $hours = floor($minutes / 60);
+    $mins = $minutes % 60;
+    
+    if ($mins === 0) {
+        return $hours . "h";
+    }
+    
+    return $hours . "h " . $mins . "m";
+}
+
+// Get today's total time
 function getTodayTotalTime() {
     $pdo = getDbConnection();
     
+    // Get completed sessions for today
     $stmt = $pdo->query("
         SELECT SUM(duration_minutes) as total_minutes
         FROM work_sessions
         WHERE date(start_time) = date('now')
         AND duration_minutes IS NOT NULL
     ");
+    $completedMinutes = $stmt->fetchColumn() ?: 0;
     
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    return $result['total_minutes'] ?: 0;
+    // Get active session duration if any
+    $activeSession = getActiveSession();
+    $activeMinutes = 0;
+    
+    if ($activeSession && date('Y-m-d', strtotime($activeSession['start_time'])) === date('Y-m-d')) {
+        $startTime = new DateTime($activeSession['start_time']);
+        $now = new DateTime();
+        $diff = $startTime->diff($now);
+        $activeMinutes = ($diff->h * 60) + $diff->i;
+    }
+    
+    return $completedMinutes + $activeMinutes;
 }
 
-// Get today's work distribution by project
+// Get today's work distribution
 function getTodayWorkDistribution() {
     $pdo = getDbConnection();
     
@@ -95,18 +108,10 @@ function getTodayWorkDistribution() {
         ORDER BY minutes DESC
     ");
     
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    return $stmt->fetchAll();
 }
 
-// Sanitize input data
-function sanitizeInput($data) {
-    $data = trim($data);
-    $data = stripslashes($data);
-    $data = htmlspecialchars($data);
-    return $data;
-}
-
-// Set flash message
+// Flash messages
 function setFlashMessage($type, $message) {
     $_SESSION['flash'] = [
         'type' => $type,
@@ -114,26 +119,43 @@ function setFlashMessage($type, $message) {
     ];
 }
 
-// Get and clear flash message
-function getFlashMessage() {
-    if (isset($_SESSION['flash'])) {
-        $flash = $_SESSION['flash'];
-        unset($_SESSION['flash']);
-        return $flash;
-    }
-    return null;
-}
-
-// Display flash message HTML
 function displayFlashMessage() {
-    $flash = getFlashMessage();
-    if ($flash) {
-        $type = $flash['type'];
-        $message = $flash['message'];
-        $bgColor = ($type == 'success') ? 'bg-green-100 border-green-500 text-green-700' : 'bg-red-100 border-red-500 text-red-700';
+    if (isset($_SESSION['flash'])) {
+        $type = $_SESSION['flash']['type'];
+        $message = $_SESSION['flash']['message'];
         
-        echo "<div class='border-l-4 p-4 mb-4 {$bgColor}' role='alert'>";
+        $bgColor = $type === 'success' ? 'bg-green-100 border-green-500 text-green-700' : 'bg-red-100 border-red-500 text-red-700';
+        
+        echo "<div class='{$bgColor} border-l-4 p-4 mb-4' role='alert'>";
         echo "<p>{$message}</p>";
         echo "</div>";
+        
+        unset($_SESSION['flash']);
     }
+}
+
+// Sanitize input
+function sanitizeInput($input) {
+    return trim(htmlspecialchars($input, ENT_QUOTES, 'UTF-8'));
+}
+
+// Check if client exists
+function clientExists($clientId) {
+    $pdo = getDbConnection();
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM clients WHERE client_id = :client_id");
+    $stmt->execute([':client_id' => $clientId]);
+    return $stmt->fetchColumn() > 0;
+}
+
+// Check if project exists
+function projectExists($projectId) {
+    $pdo = getDbConnection();
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM projects WHERE project_id = :project_id");
+    $stmt->execute([':project_id' => $projectId]);
+    return $stmt->fetchColumn() > 0;
+}
+
+function formatDateTime($dateTimeString) {
+    $dateTime = new DateTime($dateTimeString);
+    return $dateTime->format('M j, Y g:i A'); // Example: "Apr 18, 2025 8:42 PM"
 }

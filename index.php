@@ -82,6 +82,9 @@ foreach ($todayDistribution as $index => $project) {
 <div class="bg-white rounded-xl shadow p-4 mb-4">
     <h2 class="text-lg font-semibold mb-3">Quick Links</h2>
     <div class="grid grid-cols-2 gap-3">
+        <a href="clients.php" class="bg-blue-500 hover:bg-blue-600 text-white py-3 px-4 rounded text-center">
+            Clients & Projects
+        </a>
         <a href="add_client.php" class="bg-blue-500 hover:bg-blue-600 text-white py-3 px-4 rounded text-center">
             Add Client
         </a>

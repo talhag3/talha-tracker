@@ -37,8 +37,20 @@ $currentPage = basename($_SERVER['PHP_SELF']);
                     case 'add_client.php':
                         echo '➕ Add Client';
                         break;
+                    case 'edit_client.php':
+                        echo '✏️ Edit Client';
+                        break;
+                    case 'delete_client.php':
+                        echo '🗑️ Delete Client';
+                        break;
                     case 'add_project.php':
                         echo '➕ Add Project';
+                        break;
+                    case 'edit_project.php':
+                        echo '✏️ Edit Project';
+                        break;
+                    case 'delete_project.php':
+                        echo '🗑️ Delete Project';
                         break;
                     case 'start_work.php':
                         echo '▶️ Start Work';
@@ -51,6 +63,9 @@ $currentPage = basename($_SERVER['PHP_SELF']);
                         break;
                     case 'reports.php':
                         echo '📊 Reports';
+                        break;
+                    case 'clients.php':
+                        echo '👥 Clients & Projects';
                         break;
                     default:
                         echo 'Talha Tracker';
