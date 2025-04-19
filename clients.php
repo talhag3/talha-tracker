@@ -5,8 +5,11 @@ require_once 'includes/header.php';
 // Get database connection
 $pdo = getDbConnection();
 
-// Get all clients with their project counts
-$stmt = $pdo->query("
+// Get search parameter
+$searchTerm = sanitizeInput($_GET['search'] ?? '');
+
+// Build the query with search condition if provided
+$query = "
     SELECT 
         c.client_id,
         c.name,
@@ -17,10 +20,26 @@ $stmt = $pdo->query("
         SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) as active_projects
     FROM clients c
     LEFT JOIN projects p ON c.client_id = p.client_id
-    GROUP BY c.client_id
-    ORDER BY c.name
-");
-$clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+";
+
+// Add search condition if search term is provided
+$params = [];
+if (!empty($searchTerm)) {
+    $query .= " WHERE c.name LIKE :search OR c.email LIKE :search OR c.notes LIKE :search";
+    $params[':search'] = "%{$searchTerm}%";
+}
+
+$query .= " GROUP BY c.client_id ORDER BY c.name";
+
+// Execute the query
+try {
+    $stmt = $pdo->prepare($query);
+    $stmt->execute($params);
+    $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $error = "Database error: " . $e->getMessage();
+    $clients = [];
+}
 
 // Function to get projects for a specific client
 function getClientProjects($clientId) {
@@ -44,19 +63,63 @@ function getClientProjects($clientId) {
 
 <!-- Clients List -->
 <div class="bg-white rounded-xl shadow p-4 mb-4">
-    <div class="flex justify-between items-center mb-4">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
         <h2 class="text-lg font-semibold">Clients & Projects</h2>
-        <a href="add_client.php" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded text-sm">
-            Add New Client
-        </a>
+        <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <!-- Search Form -->
+            <form method="GET" action="clients.php" class="flex-grow sm:flex-grow-0 flex">
+                <input 
+                    type="text" 
+                    name="search" 
+                    placeholder="Search clients..." 
+                    value="<?php echo htmlspecialchars($searchTerm); ?>" 
+                    class="flex-grow px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-3 rounded-r-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </button>
+            </form>
+            <?php if (!empty($searchTerm)): ?>
+            <a href="clients.php" class="text-sm text-gray-600 hover:text-blue-600 py-2">
+                Clear search
+            </a>
+            <?php endif; ?>
+            <a href="add_client.php" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded text-sm whitespace-nowrap">
+                Add New Client
+            </a>
+        </div>
     </div>
+
+    <?php if (isset($error)): ?>
+    <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-4" role="alert">
+        <p><?php echo $error; ?></p>
+    </div>
+    <?php endif; ?>
+
+    <?php if (!empty($searchTerm)): ?>
+    <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-4">
+        <p>
+            Search results for: <strong><?php echo htmlspecialchars($searchTerm); ?></strong>
+            (<?php echo count($clients); ?> client<?php echo count($clients) != 1 ? 's' : ''; ?> found)
+        </p>
+    </div>
+    <?php endif; ?>
 
     <?php if (empty($clients)): ?>
     <div class="text-center py-8">
+        <?php if (!empty($searchTerm)): ?>
+        <p class="text-gray-600 mb-4">No clients found matching your search.</p>
+        <a href="clients.php" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded">
+            View All Clients
+        </a>
+        <?php else: ?>
         <p class="text-gray-600 mb-4">No clients found.</p>
         <a href="add_client.php" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded">
             Add Your First Client
         </a>
+        <?php endif; ?>
     </div>
     <?php else: ?>
     <div class="space-y-6">
