@@ -10,6 +10,11 @@ $searchTerm = sanitizeInput($_GET['search'] ?? '');
 $statusFilter = sanitizeInput($_GET['status'] ?? 'all');
 $searchScope = sanitizeInput($_GET['scope'] ?? 'all'); // 'all', 'clients', or 'projects'
 
+// Pagination parameters
+$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$limit = 5; // Number of clients per page
+$offset = ($page - 1) * $limit;
+
 // Validate status filter and search scope
 if (!in_array($statusFilter, ['all', 'active', 'inactive'])) {
     $statusFilter = 'all';
@@ -18,6 +23,13 @@ if (!in_array($statusFilter, ['all', 'active', 'inactive'])) {
 if (!in_array($searchScope, ['all', 'clients', 'projects'])) {
     $searchScope = 'all';
 }
+
+// Build the base query for counting total clients
+$countQuery = "
+    SELECT COUNT(DISTINCT c.client_id) as total
+    FROM clients c
+    LEFT JOIN projects p ON c.client_id = p.client_id
+";
 
 // Build the query based on search scope
 if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all')) {
@@ -52,6 +64,7 @@ if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all
     // Add conditions if there are any
     if (!empty($conditions)) {
         $query .= " WHERE " . implode(" AND ", $conditions);
+        $countQuery .= " WHERE " . implode(" AND ", $conditions);
     }
     
     $query .= " GROUP BY c.client_id";
@@ -59,11 +72,13 @@ if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all
     // Add having clause for status filter if not 'all'
     if ($statusFilter === 'active') {
         $query .= " HAVING active_projects > 0";
+        $countQuery .= " GROUP BY c.client_id HAVING SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) > 0";
     } elseif ($statusFilter === 'inactive') {
         $query .= " HAVING (project_count > 0 AND active_projects = 0) OR project_count = 0";
+        $countQuery .= " GROUP BY c.client_id HAVING (COUNT(DISTINCT p.project_id) > 0 AND SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) = 0) OR COUNT(DISTINCT p.project_id) = 0";
     }
     
-    $query .= " ORDER BY c.name";
+    $query .= " ORDER BY c.name LIMIT :limit OFFSET :offset";
 } else {
     // Standard client search (or no search)
     $query = "
@@ -92,6 +107,7 @@ if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all
     // Add conditions if there are any
     if (!empty($conditions)) {
         $query .= " WHERE " . implode(" AND ", $conditions);
+        $countQuery .= " WHERE " . implode(" AND ", $conditions);
     }
     
     $query .= " GROUP BY c.client_id";
@@ -99,17 +115,68 @@ if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all
     // Add having clause for status filter if not 'all'
     if ($statusFilter === 'active') {
         $query .= " HAVING active_projects > 0";
+        $countQuery .= " GROUP BY c.client_id HAVING SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) > 0";
     } elseif ($statusFilter === 'inactive') {
         $query .= " HAVING (project_count > 0 AND active_projects = 0) OR project_count = 0";
+        $countQuery .= " GROUP BY c.client_id HAVING (COUNT(DISTINCT p.project_id) > 0 AND SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) = 0) OR COUNT(DISTINCT p.project_id) = 0";
     }
     
-    $query .= " ORDER BY c.name";
+    $query .= " ORDER BY c.name LIMIT :limit OFFSET :offset";
 }
 
-// Execute the query
+// Execute the count query to get total clients
+try {
+    $countStmt = $pdo->prepare($countQuery);
+    
+    // Bind search parameters if they exist
+    if (!empty($params) && isset($params[':search'])) {
+        $countStmt->bindValue(':search', $params[':search'], PDO::PARAM_STR);
+    }
+    
+    $countStmt->execute();
+    
+    // Count the number of rows returned
+    $totalClients = $countStmt->rowCount();
+    
+    // Calculate total pages
+    $totalPages = ceil($totalClients / $limit);
+    
+    // Ensure current page is valid
+    if ($page > $totalPages && $totalPages > 0) {
+        // Redirect to the last page if the requested page is too high
+        $redirectUrl = 'clients.php?page=' . $totalPages;
+        if (!empty($searchTerm)) {
+            $redirectUrl .= '&search=' . urlencode($searchTerm);
+        }
+        if ($searchScope !== 'all') {
+            $redirectUrl .= '&scope=' . urlencode($searchScope);
+        }
+        if ($statusFilter !== 'all') {
+            $redirectUrl .= '&status=' . urlencode($statusFilter);
+        }
+        header('Location: ' . $redirectUrl);
+        exit;
+    }
+} catch (PDOException $e) {
+    $error = "Database error: " . $e->getMessage();
+    $totalClients = 0;
+    $totalPages = 1;
+}
+
+// Execute the main query
 try {
     $stmt = $pdo->prepare($query);
-    $stmt->execute($params);
+    
+    // Bind all parameters
+    foreach ($params as $key => $value) {
+        $stmt->bindValue($key, $value, PDO::PARAM_STR);
+    }
+    
+    // Bind pagination parameters
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    
+    $stmt->execute();
     $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $error = "Database error: " . $e->getMessage();
@@ -173,6 +240,25 @@ function highlightSearchTerm($text, $searchTerm) {
     $highlighted = preg_replace('/(' . preg_quote($searchTerm, '/') . ')/i', '<span class="bg-yellow-200">$1</span>', htmlspecialchars($text));
     return $highlighted;
 }
+
+// Function to generate pagination URL
+function getPaginationUrl($page, $searchTerm, $searchScope, $statusFilter) {
+    $url = 'clients.php?page=' . $page;
+    
+    if (!empty($searchTerm)) {
+        $url .= '&search=' . urlencode($searchTerm);
+    }
+    
+    if ($searchScope !== 'all') {
+        $url .= '&scope=' . urlencode($searchScope);
+    }
+    
+    if ($statusFilter !== 'all') {
+        $url .= '&status=' . urlencode($statusFilter);
+    }
+    
+    return $url;
+}
 ?>
 
 <!-- Clients List -->
@@ -193,7 +279,7 @@ function highlightSearchTerm($text, $searchTerm) {
                     <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-3 rounded-r-md">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
+                        </svg>
                     </button>
                 </div>
                 
@@ -216,9 +302,13 @@ function highlightSearchTerm($text, $searchTerm) {
                 <?php if ($statusFilter !== 'all'): ?>
                 <input type="hidden" name="status" value="<?php echo htmlspecialchars($statusFilter); ?>">
                 <?php endif; ?>
+                
+                <?php if ($page > 1): ?>
+                <input type="hidden" name="page" value="1">
+                <?php endif; ?>
             </form>
             
-            <?php if (!empty($searchTerm) || $statusFilter !== 'all'): ?>
+            <?php if (!empty($searchTerm) || $statusFilter !== 'all' || $page > 1): ?>
             <a href="clients.php" class="text-sm text-gray-600 hover:text-blue-600 py-2">
                 Clear filters
             </a>
@@ -233,17 +323,17 @@ function highlightSearchTerm($text, $searchTerm) {
     <!-- Filter Options -->
     <div class="mb-4">
         <div class="flex flex-wrap gap-2">
-            <a href="<?php echo 'clients.php' . (!empty($searchTerm) ? '?search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : ''); ?>" 
+            <a href="<?php echo 'clients.php' . (!empty($searchTerm) ? '?search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : '?') . ($page > 1 ? '&page=' . $page : ''); ?>" 
                class="<?php echo $statusFilter === 'all' ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
                 All Projects 
                 <span class="font-medium">(<?php echo $projectCounts['total_projects'] ?? 0; ?>)</span>
             </a>
-            <a href="<?php echo 'clients.php?status=active' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : ''); ?>" 
+            <a href="<?php echo 'clients.php?status=active' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : '') . ($page > 1 ? '&page=' . $page : ''); ?>" 
                class="<?php echo $statusFilter === 'active' ? 'bg-green-100 text-green-800 border-green-300' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
                 Active Projects 
                 <span class="font-medium">(<?php echo $projectCounts['active_projects'] ?? 0; ?>)</span>
             </a>
-            <a href="<?php echo 'clients.php?status=inactive' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : ''); ?>" 
+            <a href="<?php echo 'clients.php?status=inactive' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : '') . ($page > 1 ? '&page=' . $page : ''); ?>" 
                class="<?php echo $statusFilter === 'inactive' ? 'bg-gray-200 text-gray-800 border-gray-400' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
                 Inactive Projects 
                 <span class="font-medium">(<?php echo $projectCounts['inactive_projects'] ?? 0; ?>)</span>
@@ -278,7 +368,12 @@ function highlightSearchTerm($text, $searchTerm) {
     <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-4">
         <p>
             Filtering by <?php echo implode(' and ', $filterDescription); ?>
-            (<?php echo count($clients); ?> client<?php echo count($clients) != 1 ? 's' : ''; ?> found)
+            (<?php echo $totalClients; ?> client<?php echo $totalClients != 1 ? 's' : ''; ?> found)
+            <?php if ($totalPages > 1): ?>
+            <span class="ml-2">
+                Page <?php echo $page; ?> of <?php echo $totalPages; ?>
+            </span>
+            <?php endif; ?>
         </p>
     </div>
     <?php endif; ?>
@@ -484,6 +579,68 @@ function highlightSearchTerm($text, $searchTerm) {
         </div>
         <?php endforeach; ?>
     </div>
+    
+    <!-- Pagination -->
+    <?php if ($totalPages > 1): ?>
+    <div class="mt-6 flex justify-center">
+        <nav class="inline-flex rounded-md shadow">
+            <?php if ($page > 1): ?>
+            <a href="<?php echo getPaginationUrl(1, $searchTerm, $searchScope, $statusFilter); ?>" class="px-3 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                <span class="sr-only">First</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M15.707 15.707a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
+                    <path fill-rule="evenodd" d="M7.707 15.707a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 111.414 1.414L3.414 10l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
+                </svg>
+            </a>
+            <a href="<?php echo getPaginationUrl($page - 1, $searchTerm, $searchScope, $statusFilter); ?>" class="px-3 py-2 border-t border-b border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                <span class="sr-only">Previous</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
+                </svg>
+            </a>
+            <?php endif; ?>
+            
+            <?php
+            // Calculate range of page numbers to show
+            $startPage = max(1, $page - 2);
+            $endPage = min($totalPages, $page + 2);
+            
+            // Ensure we always show 5 page numbers if possible
+            if ($endPage - $startPage < 4) {
+                if ($startPage == 1) {
+                    $endPage = min($totalPages, $startPage + 4);
+                } elseif ($endPage == $totalPages) {
+                    $startPage = max(1, $endPage - 4);
+                }
+            }
+            
+            // Display page numbers
+            for ($i = $startPage; $i <= $endPage; $i++):
+            ?>
+            <a href="<?php echo getPaginationUrl($i, $searchTerm, $searchScope, $statusFilter); ?>" 
+               class="px-4 py-2 border border-gray-300 <?php echo $i === $page ? 'bg-blue-50 text-blue-600 font-bold' : 'bg-white text-gray-500 hover:bg-gray-50'; ?> text-sm">
+                <?php echo $i; ?>
+            </a>
+            <?php endfor; ?>
+            
+            <?php if ($page < $totalPages): ?>
+            <a href="<?php echo getPaginationUrl($page + 1, $searchTerm, $searchScope, $statusFilter); ?>" class="px-3 py-2 border-t border-b border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                <span class="sr-only">Next</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+                </svg>
+            </a>
+            <a href="<?php echo getPaginationUrl($totalPages, $searchTerm, $searchScope, $statusFilter); ?>" class="px-3 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                <span class="sr-only">Last</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M4.293 15.707a1 1 0 001.414 0l5-5a1 1 0 000-1.414l-5-5a1 1 0 00-1.414 1.414L8.586 10 4.293 14.293a1 1 0 000 1.414z" clip-rule="evenodd" />
+                    <path fill-rule="evenodd" d="M12.293 15.707a1 1 0 001.414 0l5-5a1 1 0 000-1.414l-5-5a1 1 0 00-1.414 1.414L16.586 10l-4.293 4.293a1 1 0 000 1.414z" clip-rule="evenodd" />
+                </svg>
+            </a>
+            <?php endif; ?>
+        </nav>
+    </div>
+    <?php endif; ?>
     <?php endif; ?>
 </div>
 
