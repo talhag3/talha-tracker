@@ -3,3 +3,9 @@ RewriteEngine On
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^(.*)$ index.php [QSA,L]
+
+# Basic Authentication
+AuthType Basic
+AuthName "Restricted Access"
+AuthUserFile .htpasswd
+Require valid-user
