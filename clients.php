@@ -5,8 +5,14 @@ require_once 'includes/header.php';
 // Get database connection
 $pdo = getDbConnection();
 
-// Get search parameter
+// Get search parameter and filter
 $searchTerm = sanitizeInput($_GET['search'] ?? '');
+$statusFilter = sanitizeInput($_GET['status'] ?? 'all');
+
+// Validate status filter
+if (!in_array($statusFilter, ['all', 'active', 'inactive'])) {
+    $statusFilter = 'all';
+}
 
 // Build the query with search condition if provided
 $query = "
@@ -17,19 +23,36 @@ $query = "
         c.notes,
         c.created_at,
         COUNT(p.project_id) as project_count,
-        SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) as active_projects
+        SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) as active_projects,
+        SUM(CASE WHEN p.is_active = 0 THEN 1 ELSE 0 END) as inactive_projects
     FROM clients c
     LEFT JOIN projects p ON c.client_id = p.client_id
 ";
 
 // Add search condition if search term is provided
+$conditions = [];
 $params = [];
+
 if (!empty($searchTerm)) {
-    $query .= " WHERE c.name LIKE :search OR c.email LIKE :search OR c.notes LIKE :search";
+    $conditions[] = "(c.name LIKE :search OR c.email LIKE :search OR c.notes LIKE :search)";
     $params[':search'] = "%{$searchTerm}%";
 }
 
-$query .= " GROUP BY c.client_id ORDER BY c.name";
+// Add conditions if there are any
+if (!empty($conditions)) {
+    $query .= " WHERE " . implode(" AND ", $conditions);
+}
+
+$query .= " GROUP BY c.client_id";
+
+// Add having clause for status filter if not 'all'
+if ($statusFilter === 'active') {
+    $query .= " HAVING active_projects > 0";
+} elseif ($statusFilter === 'inactive') {
+    $query .= " HAVING (project_count > 0 AND active_projects = 0) OR project_count = 0";
+}
+
+$query .= " ORDER BY c.name";
 
 // Execute the query
 try {
@@ -41,10 +64,11 @@ try {
     $clients = [];
 }
 
-// Function to get projects for a specific client
-function getClientProjects($clientId) {
+// Function to get projects for a specific client with optional status filter
+function getClientProjects($clientId, $statusFilter = 'all') {
     $pdo = getDbConnection();
-    $stmt = $pdo->prepare("
+    
+    $query = "
         SELECT 
             p.project_id,
             p.name,
@@ -54,11 +78,33 @@ function getClientProjects($clientId) {
             (SELECT SUM(duration_minutes) FROM work_sessions WHERE project_id = p.project_id) as total_minutes
         FROM projects p
         WHERE p.client_id = :client_id
-        ORDER BY p.is_active DESC, p.name
-    ");
-    $stmt->execute([':client_id' => $clientId]);
+    ";
+    
+    $params = [':client_id' => $clientId];
+    
+    // Add status filter if not 'all'
+    if ($statusFilter === 'active') {
+        $query .= " AND p.is_active = 1";
+    } elseif ($statusFilter === 'inactive') {
+        $query .= " AND p.is_active = 0";
+    }
+    
+    $query .= " ORDER BY p.is_active DESC, p.name";
+    
+    $stmt = $pdo->prepare($query);
+    $stmt->execute($params);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
+
+// Get total counts for the filter badges
+$stmt = $pdo->query("
+    SELECT 
+        COUNT(DISTINCT p.project_id) as total_projects,
+        SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) as active_projects,
+        SUM(CASE WHEN p.is_active = 0 THEN 1 ELSE 0 END) as inactive_projects
+    FROM projects p
+");
+$projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
 ?>
 
 <!-- Clients List -->
@@ -75,19 +121,43 @@ function getClientProjects($clientId) {
                     value="<?php echo htmlspecialchars($searchTerm); ?>" 
                     class="flex-grow px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
+                <?php if ($statusFilter !== 'all'): ?>
+                <input type="hidden" name="status" value="<?php echo htmlspecialchars($statusFilter); ?>">
+                <?php endif; ?>
                 <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-3 rounded-r-md">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                 </button>
             </form>
-            <?php if (!empty($searchTerm)): ?>
+            <?php if (!empty($searchTerm) || $statusFilter !== 'all'): ?>
             <a href="clients.php" class="text-sm text-gray-600 hover:text-blue-600 py-2">
-                Clear search
+                Clear filters
             </a>
             <?php endif; ?>
             <a href="add_client.php" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded text-sm whitespace-nowrap">
                 Add New Client
+            </a>
+        </div>
+    </div>
+
+    <!-- Filter Options -->
+    <div class="mb-4">
+        <div class="flex flex-wrap gap-2">
+            <a href="<?php echo 'clients.php' . (!empty($searchTerm) ? '?search=' . urlencode($searchTerm) : ''); ?>" 
+               class="<?php echo $statusFilter === 'all' ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
+                All Projects 
+                <span class="font-medium">(<?php echo $projectCounts['total_projects'] ?? 0; ?>)</span>
+            </a>
+            <a href="<?php echo 'clients.php?status=active' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) : ''); ?>" 
+               class="<?php echo $statusFilter === 'active' ? 'bg-green-100 text-green-800 border-green-300' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
+                Active Projects 
+                <span class="font-medium">(<?php echo $projectCounts['active_projects'] ?? 0; ?>)</span>
+            </a>
+            <a href="<?php echo 'clients.php?status=inactive' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) : ''); ?>" 
+               class="<?php echo $statusFilter === 'inactive' ? 'bg-gray-200 text-gray-800 border-gray-400' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
+                Inactive Projects 
+                <span class="font-medium">(<?php echo $projectCounts['inactive_projects'] ?? 0; ?>)</span>
             </a>
         </div>
     </div>
@@ -98,10 +168,21 @@ function getClientProjects($clientId) {
     </div>
     <?php endif; ?>
 
-    <?php if (!empty($searchTerm)): ?>
+    <?php 
+    // Prepare filter description
+    $filterDescription = [];
+    if (!empty($searchTerm)) {
+        $filterDescription[] = "search term: <strong>" . htmlspecialchars($searchTerm) . "</strong>";
+    }
+    if ($statusFilter !== 'all') {
+        $filterDescription[] = "<strong>" . ucfirst($statusFilter) . "</strong> projects only";
+    }
+    ?>
+
+    <?php if (!empty($filterDescription)): ?>
     <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4 mb-4">
         <p>
-            Search results for: <strong><?php echo htmlspecialchars($searchTerm); ?></strong>
+            Filtering by <?php echo implode(' and ', $filterDescription); ?>
             (<?php echo count($clients); ?> client<?php echo count($clients) != 1 ? 's' : ''; ?> found)
         </p>
     </div>
@@ -109,8 +190,8 @@ function getClientProjects($clientId) {
 
     <?php if (empty($clients)): ?>
     <div class="text-center py-8">
-        <?php if (!empty($searchTerm)): ?>
-        <p class="text-gray-600 mb-4">No clients found matching your search.</p>
+        <?php if (!empty($searchTerm) || $statusFilter !== 'all'): ?>
+        <p class="text-gray-600 mb-4">No clients found matching your filters.</p>
         <a href="clients.php" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded">
             View All Clients
         </a>
@@ -146,6 +227,11 @@ function getClientProjects($clientId) {
                         <?php echo $client['active_projects']; ?> Active
                     </span>
                     <?php endif; ?>
+                    <?php if ($client['inactive_projects'] > 0): ?>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                        <?php echo $client['inactive_projects']; ?> Inactive
+                    </span>
+                    <?php endif; ?>
                     <div class="flex gap-2">
                         <a href="edit_client.php?id=<?php echo $client['client_id']; ?>" class="text-sm text-gray-600 hover:text-blue-600">
                             Edit
@@ -160,8 +246,13 @@ function getClientProjects($clientId) {
             
             <!-- Client Projects -->
             <div class="p-4">
-                <?php if ($client['project_count'] > 0): ?>
-                <?php $projects = getClientProjects($client['client_id']); ?>
+                <?php 
+                // Get projects with status filter
+                $projects = getClientProjects($client['client_id'], $statusFilter);
+                $projectCount = count($projects);
+                ?>
+                
+                <?php if ($projectCount > 0): ?>
                 <div class="overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200">
                         <thead>
@@ -215,6 +306,28 @@ function getClientProjects($clientId) {
                         </svg>
                         Add Project
                     </a>
+                </div>
+                <?php elseif ($client['project_count'] > 0 && $statusFilter !== 'all'): ?>
+                <div class="text-center py-4">
+                    <p class="text-gray-600 mb-2">
+                        <?php if ($statusFilter === 'active'): ?>
+                        No active projects for this client.
+                        <?php else: ?>
+                        No inactive projects for this client.
+                        <?php endif; ?>
+                    </p>
+                    <div class="flex justify-center gap-2 mt-2">
+                        <a href="clients.php<?php echo !empty($searchTerm) ? '?search=' . urlencode($searchTerm) : ''; ?>" class="text-sm text-blue-600 hover:text-blue-800">
+                            Show all projects
+                        </a>
+                        <span class="text-gray-300">|</span>
+                        <a href="add_project.php?client_id=<?php echo $client['client_id']; ?>" class="inline-flex items-center text-sm text-blue-600 hover:text-blue-800">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                            </svg>
+                            Add Project
+                        </a>
+                    </div>
                 </div>
                 <?php else: ?>
                 <div class="text-center py-4">
