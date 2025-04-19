@@ -96,10 +96,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         
         <div class="flex justify-between">
-            <a href="index.php" class="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded">
-                Cancel
-            </a>
-            <button type="submit" class="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded">
+            <div class="flex space-x-2">
+                <a href="index.php" class="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded">
+                    Cancel
+                </a>
+                <a href="delete_work_session.php?id=<?php echo $session['session_id']; ?>" class="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded">
+                    Delete Session
+                </a>
+            </div>
+            <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded">
                 Stop Work
             </button>
         </div>
