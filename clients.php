@@ -8,51 +8,103 @@ $pdo = getDbConnection();
 // Get search parameter and filter
 $searchTerm = sanitizeInput($_GET['search'] ?? '');
 $statusFilter = sanitizeInput($_GET['status'] ?? 'all');
+$searchScope = sanitizeInput($_GET['scope'] ?? 'all'); // 'all', 'clients', or 'projects'
 
-// Validate status filter
+// Validate status filter and search scope
 if (!in_array($statusFilter, ['all', 'active', 'inactive'])) {
     $statusFilter = 'all';
 }
 
-// Build the query with search condition if provided
-$query = "
-    SELECT 
-        c.client_id,
-        c.name,
-        c.email,
-        c.notes,
-        c.created_at,
-        COUNT(p.project_id) as project_count,
-        SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) as active_projects,
-        SUM(CASE WHEN p.is_active = 0 THEN 1 ELSE 0 END) as inactive_projects
-    FROM clients c
-    LEFT JOIN projects p ON c.client_id = p.client_id
-";
-
-// Add search condition if search term is provided
-$conditions = [];
-$params = [];
-
-if (!empty($searchTerm)) {
-    $conditions[] = "(c.name LIKE :search OR c.email LIKE :search OR c.notes LIKE :search)";
-    $params[':search'] = "%{$searchTerm}%";
+if (!in_array($searchScope, ['all', 'clients', 'projects'])) {
+    $searchScope = 'all';
 }
 
-// Add conditions if there are any
-if (!empty($conditions)) {
-    $query .= " WHERE " . implode(" AND ", $conditions);
+// Build the query based on search scope
+if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all')) {
+    // When searching for projects, we need a different approach to get all clients with matching projects
+    $query = "
+        SELECT 
+            c.client_id,
+            c.name,
+            c.email,
+            c.notes,
+            c.created_at,
+            COUNT(DISTINCT p.project_id) as project_count,
+            SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) as active_projects,
+            SUM(CASE WHEN p.is_active = 0 THEN 1 ELSE 0 END) as inactive_projects
+        FROM clients c
+        LEFT JOIN projects p ON c.client_id = p.client_id
+    ";
+    
+    $conditions = [];
+    $params = [];
+    
+    // Add project search condition
+    if ($searchScope === 'projects') {
+        $conditions[] = "(p.name LIKE :search OR p.notes LIKE :search)";
+        $params[':search'] = "%{$searchTerm}%";
+    } else {
+        // Search in both clients and projects
+        $conditions[] = "(c.name LIKE :search OR c.email LIKE :search OR c.notes LIKE :search OR p.name LIKE :search OR p.notes LIKE :search)";
+        $params[':search'] = "%{$searchTerm}%";
+    }
+    
+    // Add conditions if there are any
+    if (!empty($conditions)) {
+        $query .= " WHERE " . implode(" AND ", $conditions);
+    }
+    
+    $query .= " GROUP BY c.client_id";
+    
+    // Add having clause for status filter if not 'all'
+    if ($statusFilter === 'active') {
+        $query .= " HAVING active_projects > 0";
+    } elseif ($statusFilter === 'inactive') {
+        $query .= " HAVING (project_count > 0 AND active_projects = 0) OR project_count = 0";
+    }
+    
+    $query .= " ORDER BY c.name";
+} else {
+    // Standard client search (or no search)
+    $query = "
+        SELECT 
+            c.client_id,
+            c.name,
+            c.email,
+            c.notes,
+            c.created_at,
+            COUNT(p.project_id) as project_count,
+            SUM(CASE WHEN p.is_active = 1 THEN 1 ELSE 0 END) as active_projects,
+            SUM(CASE WHEN p.is_active = 0 THEN 1 ELSE 0 END) as inactive_projects
+        FROM clients c
+        LEFT JOIN projects p ON c.client_id = p.client_id
+    ";
+    
+    $conditions = [];
+    $params = [];
+    
+    // Add client search condition if searching for clients only
+    if (!empty($searchTerm) && ($searchScope === 'clients' || $searchScope === 'all')) {
+        $conditions[] = "(c.name LIKE :search OR c.email LIKE :search OR c.notes LIKE :search)";
+        $params[':search'] = "%{$searchTerm}%";
+    }
+    
+    // Add conditions if there are any
+    if (!empty($conditions)) {
+        $query .= " WHERE " . implode(" AND ", $conditions);
+    }
+    
+    $query .= " GROUP BY c.client_id";
+    
+    // Add having clause for status filter if not 'all'
+    if ($statusFilter === 'active') {
+        $query .= " HAVING active_projects > 0";
+    } elseif ($statusFilter === 'inactive') {
+        $query .= " HAVING (project_count > 0 AND active_projects = 0) OR project_count = 0";
+    }
+    
+    $query .= " ORDER BY c.name";
 }
-
-$query .= " GROUP BY c.client_id";
-
-// Add having clause for status filter if not 'all'
-if ($statusFilter === 'active') {
-    $query .= " HAVING active_projects > 0";
-} elseif ($statusFilter === 'inactive') {
-    $query .= " HAVING (project_count > 0 AND active_projects = 0) OR project_count = 0";
-}
-
-$query .= " ORDER BY c.name";
 
 // Execute the query
 try {
@@ -64,8 +116,8 @@ try {
     $clients = [];
 }
 
-// Function to get projects for a specific client with optional status filter
-function getClientProjects($clientId, $statusFilter = 'all') {
+// Function to get projects for a specific client with optional status filter and search term
+function getClientProjects($clientId, $statusFilter = 'all', $searchTerm = '', $searchScope = 'all') {
     $pdo = getDbConnection();
     
     $query = "
@@ -89,6 +141,12 @@ function getClientProjects($clientId, $statusFilter = 'all') {
         $query .= " AND p.is_active = 0";
     }
     
+    // Add search condition for projects if searching in projects
+    if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all')) {
+        $query .= " AND (p.name LIKE :search OR p.notes LIKE :search)";
+        $params[':search'] = "%{$searchTerm}%";
+    }
+    
     $query .= " ORDER BY p.is_active DESC, p.name";
     
     $stmt = $pdo->prepare($query);
@@ -105,6 +163,16 @@ $stmt = $pdo->query("
     FROM projects p
 ");
 $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
+
+// Function to highlight search term in text
+function highlightSearchTerm($text, $searchTerm) {
+    if (empty($searchTerm)) {
+        return htmlspecialchars($text);
+    }
+    
+    $highlighted = preg_replace('/(' . preg_quote($searchTerm, '/') . ')/i', '<span class="bg-yellow-200">$1</span>', htmlspecialchars($text));
+    return $highlighted;
+}
 ?>
 
 <!-- Clients List -->
@@ -113,28 +181,49 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
         <h2 class="text-lg font-semibold">Clients & Projects</h2>
         <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             <!-- Search Form -->
-            <form method="GET" action="clients.php" class="flex-grow sm:flex-grow-0 flex">
-                <input 
-                    type="text" 
-                    name="search" 
-                    placeholder="Search clients..." 
-                    value="<?php echo htmlspecialchars($searchTerm); ?>" 
-                    class="flex-grow px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
+            <form method="GET" action="clients.php" class="flex-grow sm:flex-grow-0 flex flex-col sm:flex-row gap-2">
+                <div class="flex flex-grow">
+                    <input 
+                        type="text" 
+                        name="search" 
+                        placeholder="Search..." 
+                        value="<?php echo htmlspecialchars($searchTerm); ?>" 
+                        class="flex-grow px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                    <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-3 rounded-r-md">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    </button>
+                </div>
+                
+                <!-- Search Scope Options -->
+                <div class="flex rounded-md overflow-hidden border border-gray-300">
+                    <label class="px-2 py-1 text-sm <?php echo $searchScope === 'all' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'; ?>">
+                        <input type="radio" name="scope" value="all" <?php echo $searchScope === 'all' ? 'checked' : ''; ?> class="sr-only" onchange="this.form.submit()">
+                        All
+                    </label>
+                    <label class="px-2 py-1 text-sm border-l border-gray-300 <?php echo $searchScope === 'clients' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'; ?>">
+                        <input type="radio" name="scope" value="clients" <?php echo $searchScope === 'clients' ? 'checked' : ''; ?> class="sr-only" onchange="this.form.submit()">
+                        Clients
+                    </label>
+                    <label class="px-2 py-1 text-sm border-l border-gray-300 <?php echo $searchScope === 'projects' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'; ?>">
+                        <input type="radio" name="scope" value="projects" <?php echo $searchScope === 'projects' ? 'checked' : ''; ?> class="sr-only" onchange="this.form.submit()">
+                        Projects
+                    </label>
+                </div>
+                
                 <?php if ($statusFilter !== 'all'): ?>
                 <input type="hidden" name="status" value="<?php echo htmlspecialchars($statusFilter); ?>">
                 <?php endif; ?>
-                <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-3 rounded-r-md">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                </button>
             </form>
+            
             <?php if (!empty($searchTerm) || $statusFilter !== 'all'): ?>
             <a href="clients.php" class="text-sm text-gray-600 hover:text-blue-600 py-2">
                 Clear filters
             </a>
             <?php endif; ?>
+            
             <a href="add_client.php" class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded text-sm whitespace-nowrap">
                 Add New Client
             </a>
@@ -144,17 +233,17 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
     <!-- Filter Options -->
     <div class="mb-4">
         <div class="flex flex-wrap gap-2">
-            <a href="<?php echo 'clients.php' . (!empty($searchTerm) ? '?search=' . urlencode($searchTerm) : ''); ?>" 
+            <a href="<?php echo 'clients.php' . (!empty($searchTerm) ? '?search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : ''); ?>" 
                class="<?php echo $statusFilter === 'all' ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
                 All Projects 
                 <span class="font-medium">(<?php echo $projectCounts['total_projects'] ?? 0; ?>)</span>
             </a>
-            <a href="<?php echo 'clients.php?status=active' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) : ''); ?>" 
+            <a href="<?php echo 'clients.php?status=active' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : ''); ?>" 
                class="<?php echo $statusFilter === 'active' ? 'bg-green-100 text-green-800 border-green-300' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
                 Active Projects 
                 <span class="font-medium">(<?php echo $projectCounts['active_projects'] ?? 0; ?>)</span>
             </a>
-            <a href="<?php echo 'clients.php?status=inactive' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) : ''); ?>" 
+            <a href="<?php echo 'clients.php?status=inactive' . (!empty($searchTerm) ? '&search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : ''); ?>" 
                class="<?php echo $statusFilter === 'inactive' ? 'bg-gray-200 text-gray-800 border-gray-400' : 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'; ?> px-3 py-1 rounded-full text-sm border">
                 Inactive Projects 
                 <span class="font-medium">(<?php echo $projectCounts['inactive_projects'] ?? 0; ?>)</span>
@@ -172,7 +261,13 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
     // Prepare filter description
     $filterDescription = [];
     if (!empty($searchTerm)) {
-        $filterDescription[] = "search term: <strong>" . htmlspecialchars($searchTerm) . "</strong>";
+        $scopeText = '';
+        if ($searchScope === 'clients') {
+            $scopeText = ' in clients';
+        } elseif ($searchScope === 'projects') {
+            $scopeText = ' in projects';
+        }
+        $filterDescription[] = "search term: <strong>" . htmlspecialchars($searchTerm) . "</strong>" . $scopeText;
     }
     if ($statusFilter !== 'all') {
         $filterDescription[] = "<strong>" . ucfirst($statusFilter) . "</strong> projects only";
@@ -209,11 +304,25 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
             <!-- Client Header -->
             <div class="bg-gray-50 p-4 flex flex-col sm:flex-row sm:justify-between sm:items-center">
                 <div>
-                    <h3 class="text-lg font-medium text-blue-600"><?php echo htmlspecialchars($client['name']); ?></h3>
+                    <h3 class="text-lg font-medium text-blue-600">
+                        <?php 
+                        if (!empty($searchTerm) && $searchScope !== 'projects') {
+                            echo highlightSearchTerm($client['name'], $searchTerm);
+                        } else {
+                            echo htmlspecialchars($client['name']);
+                        }
+                        ?>
+                    </h3>
                     <?php if ($client['email']): ?>
                     <p class="text-sm text-gray-600">
                         <a href="mailto:<?php echo htmlspecialchars($client['email']); ?>" class="hover:underline">
-                            <?php echo htmlspecialchars($client['email']); ?>
+                            <?php 
+                            if (!empty($searchTerm) && $searchScope !== 'projects') {
+                                echo highlightSearchTerm($client['email'], $searchTerm);
+                            } else {
+                                echo htmlspecialchars($client['email']);
+                            }
+                            ?>
                         </a>
                     </p>
                     <?php endif; ?>
@@ -247,8 +356,8 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
             <!-- Client Projects -->
             <div class="p-4">
                 <?php 
-                // Get projects with status filter
-                $projects = getClientProjects($client['client_id'], $statusFilter);
+                // Get projects with status filter and search term
+                $projects = getClientProjects($client['client_id'], $statusFilter, $searchTerm, $searchScope);
                 $projectCount = count($projects);
                 ?>
                 
@@ -266,9 +375,15 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
                         </thead>
                         <tbody class="divide-y divide-gray-200">
                             <?php foreach ($projects as $project): ?>
-                            <tr class="hover:bg-gray-50">
+                            <tr class="hover:bg-gray-50 <?php echo (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all') && (stripos($project['name'], $searchTerm) !== false || stripos($project['notes'], $searchTerm) !== false)) ? 'bg-yellow-50' : ''; ?>">
                                 <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
-                                    <?php echo htmlspecialchars($project['name']); ?>
+                                    <?php 
+                                    if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all')) {
+                                        echo highlightSearchTerm($project['name'], $searchTerm);
+                                    } else {
+                                        echo htmlspecialchars($project['name']);
+                                    }
+                                    ?>
                                 </td>
                                 <td class="px-3 py-2 whitespace-nowrap text-sm">
                                     <?php if ($project['is_active']): ?>
@@ -295,6 +410,14 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
                                     </div>
                                 </td>
                             </tr>
+                            <?php if (!empty($project['notes']) && !empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all') && stripos($project['notes'], $searchTerm) !== false): ?>
+                            <tr class="bg-yellow-50">
+                                <td colspan="5" class="px-3 py-2 text-sm text-gray-700">
+                                    <span class="font-medium">Notes:</span> 
+                                    <?php echo highlightSearchTerm($project['notes'], $searchTerm); ?>
+                                </td>
+                            </tr>
+                            <?php endif; ?>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
@@ -307,17 +430,19 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
                         Add Project
                     </a>
                 </div>
-                <?php elseif ($client['project_count'] > 0 && $statusFilter !== 'all'): ?>
+                <?php elseif ($client['project_count'] > 0 && ($statusFilter !== 'all' || !empty($searchTerm))): ?>
                 <div class="text-center py-4">
                     <p class="text-gray-600 mb-2">
-                        <?php if ($statusFilter === 'active'): ?>
+                        <?php if (!empty($searchTerm) && ($searchScope === 'projects' || $searchScope === 'all')): ?>
+                        No projects found matching "<?php echo htmlspecialchars($searchTerm); ?>".
+                        <?php elseif ($statusFilter === 'active'): ?>
                         No active projects for this client.
                         <?php else: ?>
                         No inactive projects for this client.
                         <?php endif; ?>
                     </p>
                     <div class="flex justify-center gap-2 mt-2">
-                        <a href="clients.php<?php echo !empty($searchTerm) ? '?search=' . urlencode($searchTerm) : ''; ?>" class="text-sm text-blue-600 hover:text-blue-800">
+                        <a href="clients.php<?php echo !empty($searchTerm) ? '?search=' . urlencode($searchTerm) . '&scope=' . urlencode($searchScope) : ''; ?>" class="text-sm text-blue-600 hover:text-blue-800">
                             Show all projects
                         </a>
                         <span class="text-gray-300">|</span>
@@ -345,7 +470,15 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
             <?php if ($client['notes']): ?>
             <div class="border-t border-gray-200 px-4 py-3">
                 <h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Notes</h4>
-                <p class="text-sm text-gray-700"><?php echo nl2br(htmlspecialchars($client['notes'])); ?></p>
+                <p class="text-sm text-gray-700">
+                    <?php 
+                    if (!empty($searchTerm) && $searchScope !== 'projects') {
+                        echo highlightSearchTerm($client['notes'], $searchTerm);
+                    } else {
+                        echo nl2br(htmlspecialchars($client['notes']));
+                    }
+                    ?>
+                </p>
             </div>
             <?php endif; ?>
         </div>
@@ -353,6 +486,18 @@ $projectCounts = $stmt->fetch(PDO::FETCH_ASSOC);
     </div>
     <?php endif; ?>
 </div>
+
+<script>
+// Auto-submit form when search scope changes
+document.addEventListener('DOMContentLoaded', function() {
+    const scopeRadios = document.querySelectorAll('input[name="scope"]');
+    scopeRadios.forEach(radio => {
+        radio.addEventListener('change', function() {
+            this.form.submit();
+        });
+    });
+});
+</script>
 
 <?php
 // Include footer
